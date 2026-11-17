@@ -1,0 +1,8 @@
+.env
+.env.local
+data/*.db
+data/*.db-*
+*.exe
+bin/
+.DS_Store
+coverage.out
