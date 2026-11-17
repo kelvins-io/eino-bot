@@ -2,128 +2,180 @@
 
 基于 [cloudwego/eino](https://github.com/cloudwego/eino) ADK 的可持久化个人 Agent Bot。
 
-支持：
+默认模型走[硅基流动](https://cloud.siliconflow.cn/models) OpenAI 兼容接口；数据层为 **GORM + SQLite**（纯 Go 驱动 `glebarez/sqlite`）。服务默认监听 `127.0.0.1:12120`。
 
-- 24 小时常驻 HTTP 服务（文字 SSE / JSON、语音转写）
-- 人物画像记忆 + 内容哈希自动去重（SQLite）
-- 授权文档库 / 简历库分析
-- GitHub 用户与仓库搜索归纳
-- Bot 间 A2A 签名消息交换
-- 招聘场景：细化需求 → 搜人 → 联系对方助手 → 标记 Top3
+## 已落地能力
+
+### 常驻 HTTP 服务
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/healthz` | 健康检查 |
+| GET | `/v1/info` | bot / 模型 / 目录信息 |
+| GET | `/v1/chat` | 文字对话（SSE 流式） |
+| POST | `/v1/chat` | 文字对话（JSON） |
+| POST | `/v1/voice` | 语音上传转写，默认可直接跑 Agent |
+| GET | `/v1/profile` | 查询人物画像 |
+| GET | `/v1/a2a/discover` | A2A 能力发现 |
+| POST | `/v1/a2a/message` | A2A 签名消息收发 |
+
+### 人物记忆与画像
+
+- `remember_fact`：写入原子事实
+- 归一化文本 + SHA256 去重（`owner_id + content_hash` 唯一）
+- `get_profile` / `search_memory` / `update_profile`
+- 对话日志与 ADK checkpoint 落库，进程重启后可续
+
+### 文档 / 简历库
+
+- `analyze_docs`：扫描 `BOT_DOCS_ROOT`（沙箱路径）
+- `search_resumes`：扫描 `BOT_RESUME_ROOT`
+- 样例：`data/docs/`、`data/resumes/`
+
+### GitHub 线索
+
+- `search_github`：搜用户 / 仓库
+- `analyze_github_user`：读公开资料与最近仓库
+- 用户不存在（404）等失败时软返回 `found=false` / `ok=false`，不中断整轮
+- 可选 `GITHUB_TOKEN` 提高配额
+
+### Bot 间 A2A
+
+- HMAC 签名信封：`id/from_bot_id/to_bot_id/intent/payload/timestamp/signature`
+- 双方共享 `A2A_SHARED_SECRET`
+- 常用 intent：`handshake`、`profile.inquiry`、`recruit.inquiry`
+- `contact_peer_bot`：对方离线返回 `reachable=false`，招聘流程可继续用简历打分
+
+### 招聘闭环
+
+1. `save_job_requirement` / `update_job_requirement` 细化并持久化需求  
+2. `search_resumes` / `search_github` 找人  
+3. `contact_peer_bot` 联系对方助手（可选）  
+4. `upsert_candidate` 打分  
+5. `rank_top_candidates` / `list_candidates` 标记 Top3  
+
+### Agent 工具一览
+
+| 工具 | 用途 |
+| --- | --- |
+| `remember_fact` | 写入去重记忆 |
+| `get_profile` | 读完整画像 |
+| `search_memory` | 关键词检索事实 |
+| `update_profile` | 更新显示名/摘要/bot 联系方式 |
+| `analyze_docs` | 分析授权文档 |
+| `search_resumes` | 检索简历库 |
+| `search_github` | GitHub 搜索 |
+| `analyze_github_user` | 分析 GitHub 用户 |
+| `save_job_requirement` | 保存招聘需求 |
+| `update_job_requirement` | 更新招聘需求 |
+| `upsert_candidate` | 写入/更新候选人 |
+| `list_candidates` | 列出候选人 |
+| `rank_top_candidates` | 按分标记 Top N（默认 3） |
+| `contact_peer_bot` | A2A 信息交换 |
+
+### 工程基础
+
+- 模型：`MODEL_TYPE=siliconflow`（默认）/ `openai` / `ark`
+- 需选用支持 Function Calling 的对话模型
+- 持久化表：画像事实、画像元数据、对话、checkpoint、招聘需求、候选人、A2A 报文
+- 本地联调：`make run`、`make peer|peer2|peer3`
+- 单测：记忆去重（`internal/memory`）
 
 ## 架构
 
 ```
 用户文字/语音 ──► Hertz API ──► Eino ChatModelAgent (ReAct)
                                   │
-                                  ├─ remember_fact / get_profile（去重记忆）
+                                  ├─ remember_fact / get_profile / search_memory
                                   ├─ analyze_docs / search_resumes
                                   ├─ search_github / analyze_github_user
                                   ├─ save_job_requirement / upsert_candidate / rank_top_candidates
                                   └─ contact_peer_bot ──► 其他 Bot /v1/a2a/message
+                                                     ▲
+                                  GORM + SQLite（画像 / 招聘 / checkpoint / A2A 日志）
 ```
 
 ## 快速开始
 
 ```bash
 cp .env.example .env
-# 编辑 .env，填入 SILICONFLOW_API_KEY
-# 模型 ID 从硅基流动模型广场复制，例如 deepseek-ai/DeepSeek-V3
+# 填入 SILICONFLOW_API_KEY
+# SILICONFLOW_MODEL 须与模型广场完整 ID 一致，例如 deepseek-ai/DeepSeek-V3
 
 go mod tidy
 make run
 ```
 
-健康检查：
-
 ```bash
 curl -s http://127.0.0.1:12120/healthz
 curl -s http://127.0.0.1:12120/v1/info
-```
 
-对话（SSE）：
-
-```bash
+# SSE
 curl -N 'http://127.0.0.1:12120/v1/chat?query=我想招聘一个AI%20FDE工程师，帮我细化要求并记住'
-```
 
-对话（JSON）：
-
-```bash
+# JSON
 curl -s -X POST http://127.0.0.1:12120/v1/chat \
   -H 'content-type: application/json' \
   -d '{"query":"去简历库搜索符合 AI FDE 的人选，联系他们的助手 bot，最后给出匹配度最高的 3 位"}'
-```
 
-语音（OpenAI 兼容 ASR）：
+# 画像
+curl -s 'http://127.0.0.1:12120/v1/profile?owner_id=user-alice'
 
-```bash
+# 语音（需配置 ASR）
 curl -s -X POST http://127.0.0.1:12120/v1/voice \
   -F file=@./sample.wav \
   -F session_id=ses_demo
 ```
 
-画像：
+## 招聘 Demo
 
-```bash
-curl -s 'http://127.0.0.1:12120/v1/profile?owner_id=user-alice'
-```
+1. 招聘方：`make run`（`12120`）
+2. 可选真实 A2A：
+   - `make peer` → `8081`（对应样例「陈明」）
+   - `make peer2` → `8082`（「李华」）
+   - `make peer3` → `8083`（「王菲」）
+3. 对招聘 bot：细化 AI FDE 要求并记忆 → 搜简历库 →（可选）联系对方 bot → 给出 Top3
 
-## 招聘 Demo 流程
-
-1. 启动招聘方 bot：`make run`（12120）
-2. 可选：启动候选人 bot：`make peer`（8081，需同样配置模型 key）
-3. 对招聘 bot 说：细化 AI FDE 要求并记忆
-4. 再要求：搜索 `data/resumes`，必要时 `search_github`，对有 bot 地址的人选 `contact_peer_bot`
-5. 调用排序后返回 Top3
-
-样例简历已放在 `data/resumes/`。
-
-## A2A 协议
-
-双方共享 `A2A_SHARED_SECRET`。
-
-- `GET /v1/a2a/discover`：发现能力
-- `POST /v1/a2a/message`：携带 HMAC 签名信封
-
-信封字段：`id/from_bot_id/to_bot_id/intent/payload/timestamp/signature`
-
-常用 intent：`handshake`、`profile.inquiry`、`recruit.inquiry`
+说明：样例简历里的 GitHub login 为演示占位，真实平台上可能 404；Agent 会回退到简历内容继续匹配。
 
 ## 配置要点
 
 | 变量 | 含义 |
 | --- | --- |
-| `BOT_ID` / `BOT_PUBLIC_URL` | 本 bot 身份与对外地址 |
-| `A2A_SHARED_SECRET` | 信任域共享密钥 |
-| `BOT_DOCS_ROOT` / `BOT_RESUME_ROOT` | 授权文档/简历目录 |
-| `GITHUB_TOKEN` | GitHub API 配额 |
-| `MODEL_TYPE` | 默认 `siliconflow`；也可 `openai` / `ark` |
+| `BOT_ID` / `BOT_NAME` / `BOT_PUBLIC_URL` | 本 bot 身份与对外地址 |
+| `OWNER_ID` | 默认画像归属人 |
+| `HOST` / `PORT` | 监听地址，默认 `127.0.0.1:12120` |
+| `A2A_SHARED_SECRET` | A2A 信任域共享密钥 |
+| `BOT_DOCS_ROOT` / `BOT_RESUME_ROOT` | 授权文档 / 简历目录 |
+| `SQLITE_PATH` | 数据库路径，默认 `./data/bot.db` |
+| `MODEL_TYPE` | `siliconflow` / `openai` / `ark` |
 | `SILICONFLOW_API_KEY` | 硅基流动 API Key |
-| `SILICONFLOW_MODEL` | 模型广场完整 ID（如 `deepseek-ai/DeepSeek-V3`） |
+| `SILICONFLOW_MODEL` | 模型广场完整 ID |
 | `SILICONFLOW_BASE_URL` | 默认 `https://api.siliconflow.cn/v1` |
+| `GITHUB_TOKEN` | GitHub API Token（可选） |
+| `ASR_*` | 语音转写（可选，兼容 `/audio/transcriptions`） |
+| `MAX_ITERATIONS` | Agent 最大工具循环次数 |
 
-Agent 能力依赖 Function Calling，请在模型广场选择支持工具调用的对话模型。
-
-## 持久化
-
-SQLite + GORM（默认 `./data/bot.db`，纯 Go 驱动 `glebarez/sqlite`）保存：
-
-- 画像事实（`owner_id + content_hash` 唯一，重复信息自动跳过）
-- 对话日志、ADK checkpoint
-- 招聘需求、候选人、A2A 报文
-
-进程重启后记忆与会话 checkpoint 仍可用。
+完整示例见 `.env.example`。
 
 ## 目录
 
 ```
 cmd/bot/                 入口
-internal/agent/          Eino ChatModelAgent 装配
-internal/memory/         画像/招聘持久化与去重
+internal/agent/          Eino ChatModelAgent 装配与指令
+internal/memory/         画像 / 招聘业务与去重
+internal/store/          GORM 模型、迁移、checkpoint
 internal/tools/          Agent 工具集
-internal/a2a/            Bot 间协议
-internal/asr/            语音转写
-internal/server/         Hertz HTTP/SSE
+internal/a2a/            Bot 间 HMAC 协议
+internal/asr/            语音转写客户端
+internal/server/         Hertz HTTP / SSE
+internal/config/         环境变量加载
 data/docs|resumes/       授权样例库
 ```
+
+## 尚未覆盖
+
+- 飞书 / 企微等 IM 通道
+- 多实例 Postgres
+- 真实候选人 GitHub 深度画像与自动建档
+- 替换为公开标准 A2A 协议
