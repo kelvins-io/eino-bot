@@ -12,11 +12,13 @@ import (
 	"github.com/cloudwego/eino/schema"
 	"github.com/cloudwego/hertz/pkg/app"
 	"github.com/cloudwego/hertz/pkg/app/server"
+	"github.com/cloudwego/hertz/pkg/common/adaptor"
 	"github.com/cloudwego/hertz/pkg/protocol/consts"
 	"github.com/google/uuid"
 	"github.com/hertz-contrib/sse"
 
-	"github.com/kelvins-io/eino-bot/internal/a2a"
+	"github.com/a2aproject/a2a-go/v2/a2asrv"
+
 	"github.com/kelvins-io/eino-bot/internal/agent"
 	"github.com/kelvins-io/eino-bot/internal/asr"
 )
@@ -36,7 +38,8 @@ func New(rt *agent.Runtime, asrClient *asr.Client) *Server {
 
 func (s *Server) Run() {
 	log.Printf("eino-bot listening on http://%s", s.rt.Cfg.Addr())
-	log.Printf("bot_id=%s public=%s", s.rt.Cfg.BotID, s.rt.Cfg.BotPublicURL)
+	log.Printf("bot_id=%s public=%s a2a_card=%s%s",
+		s.rt.Cfg.BotID, s.rt.Cfg.BotPublicURL, s.rt.Cfg.BotPublicURL, a2asrv.WellKnownAgentCardPath)
 	s.h.Spin()
 }
 
@@ -49,8 +52,36 @@ func (s *Server) routes() {
 	s.h.POST("/v1/chat", s.handleChatJSON)
 	s.h.POST("/v1/voice", s.handleVoice)
 	s.h.GET("/v1/profile", s.handleProfile)
+
+	// Public A2A protocol (Agent Card + JSON-RPC).
+	s.h.GET(a2asrv.WellKnownAgentCardPath, adaptor.HertzHandler(s.rt.A2A.CardHandler()))
+	s.h.Any(s.rt.A2A.A2APath, adaptor.HertzHandler(s.rt.A2A.JSONRPCHandler()))
+
+	// Optional embedded A2A registry catalog.
+	if s.rt.A2A.HostRegistry() {
+		reg := s.rt.A2A.RegistryHandler()
+		for _, p := range []string{
+			"/registry/register",
+			"/registry/unregister",
+			"/registry/heartbeat",
+			"/registry/agents",
+			"/agents",
+		} {
+			path := p
+			s.h.Any(path, adaptor.HertzHandler(reg))
+		}
+	}
+
+	// Compatibility aliases for older clients.
 	s.h.GET("/v1/a2a/discover", s.handleA2ADiscover)
-	s.h.POST("/v1/a2a/message", s.handleA2AMessage)
+	s.h.Any("/v1/a2a/message", func(ctx context.Context, c *app.RequestContext) {
+		c.JSON(consts.StatusGone, map[string]any{
+			"error":            "legacy HMAC A2A endpoint removed",
+			"use_agent_card":   s.rt.Cfg.BotPublicURL + a2asrv.WellKnownAgentCardPath,
+			"use_jsonrpc_path": s.rt.Cfg.BotPublicURL + s.rt.A2A.A2APath,
+			"protocol":         "a2a",
+		})
+	})
 }
 
 func (s *Server) handleInfo(ctx context.Context, c *app.RequestContext) {
@@ -64,13 +95,14 @@ func (s *Server) handleInfo(ctx context.Context, c *app.RequestContext) {
 		"model_type":  s.rt.Cfg.ModelType,
 		"model":       s.rt.Cfg.OpenAIModel,
 		"model_base":  s.rt.Cfg.OpenAIBaseURL,
+		"a2a":         s.rt.A2A.DiscoverSummary(),
 		"endpoints": []string{
 			"GET /v1/chat?query=...&session_id=...",
 			"POST /v1/chat",
 			"POST /v1/voice",
 			"GET /v1/profile?owner_id=...",
-			"GET /v1/a2a/discover",
-			"POST /v1/a2a/message",
+			"GET " + a2asrv.WellKnownAgentCardPath,
+			"POST " + s.rt.A2A.A2APath + " (A2A JSON-RPC)",
 		},
 	})
 }
@@ -266,29 +298,7 @@ func (s *Server) handleVoice(ctx context.Context, c *app.RequestContext) {
 }
 
 func (s *Server) handleA2ADiscover(ctx context.Context, c *app.RequestContext) {
-	c.JSON(consts.StatusOK, s.rt.A2A.Discover(ctx))
-}
-
-func (s *Server) handleA2AMessage(ctx context.Context, c *app.RequestContext) {
-	var env a2a.Envelope
-	if err := json.Unmarshal(c.Request.Body(), &env); err != nil {
-		c.JSON(consts.StatusBadRequest, map[string]string{"error": "invalid envelope"})
-		return
-	}
-	p, _ := s.rt.Memory.GetProfile(ctx, s.rt.OwnerID)
-	summary := ""
-	if p != nil {
-		summary = p.Summary
-		if summary == "" && p.DisplayName != "" {
-			summary = p.DisplayName
-		}
-	}
-	reply, err := s.rt.A2A.HandleIncoming(ctx, &env, summary)
-	if err != nil {
-		c.JSON(consts.StatusUnauthorized, map[string]string{"error": err.Error()})
-		return
-	}
-	c.JSON(consts.StatusOK, reply)
+	c.JSON(consts.StatusOK, s.rt.A2A.DiscoverSummary())
 }
 
 func publish(stream *sse.Stream, v any) error {

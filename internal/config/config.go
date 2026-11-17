@@ -16,52 +16,62 @@ const (
 
 // Config holds runtime settings for a persistent personal agent bot.
 type Config struct {
-	BotID           string
-	BotName         string
-	BotPublicURL    string
-	Host            string
-	Port            int
-	DataDir         string
-	SQLitePath      string
-	DocsRoot        string
-	ResumeRoot      string
-	A2ASharedSecret string
-	ModelType       string
-	OpenAIAPIKey    string
-	OpenAIModel     string
-	OpenAIBaseURL   string
-	OpenAIByAzure   bool
-	ArkAPIKey       string
-	ArkModel        string
-	ArkBaseURL      string
-	GitHubToken     string
-	ASRBaseURL      string
-	ASRAPIKey       string
-	ASRModel        string
-	MaxIterations   int
-	SessionTTL      time.Duration
+	BotID                   string
+	BotName                 string
+	BotPublicURL            string
+	Host                    string
+	Port                    int
+	DataDir                 string
+	SQLitePath              string
+	DocsRoot                string
+	ResumeRoot              string
+	A2ABearerToken          string
+	A2APath                 string
+	A2AHostRegistry         bool
+	A2AAutoRegister         bool
+	A2ARegistryURLs         []string
+	A2ARegistryHeartbeatSec int
+	ModelType               string
+	OpenAIAPIKey            string
+	OpenAIModel             string
+	OpenAIBaseURL           string
+	OpenAIByAzure           bool
+	ArkAPIKey               string
+	ArkModel                string
+	ArkBaseURL              string
+	GitHubToken             string
+	ASRBaseURL              string
+	ASRAPIKey               string
+	ASRModel                string
+	MaxIterations           int
+	SessionTTL              time.Duration
 }
 
 func Load() (*Config, error) {
 	modelType := strings.ToLower(envOr("MODEL_TYPE", "siliconflow"))
 	cfg := &Config{
-		BotID:           envOr("BOT_ID", "bot-local-1"),
-		BotName:         envOr("BOT_NAME", "PersonalAgent"),
-		BotPublicURL:    envOr("BOT_PUBLIC_URL", "http://127.0.0.1:12120"),
-		Host:            envOr("HOST", "127.0.0.1"),
-		Port:            envInt("PORT", 12120),
-		DataDir:         envOr("DATA_DIR", "./data"),
-		DocsRoot:        envOr("BOT_DOCS_ROOT", "./data/docs"),
-		ResumeRoot:      envOr("BOT_RESUME_ROOT", "./data/resumes"),
-		A2ASharedSecret: envOr("A2A_SHARED_SECRET", "dev-a2a-secret-change-me"),
-		ModelType:       modelType,
-		OpenAIByAzure:   os.Getenv("OPENAI_BY_AZURE") == "true",
-		ArkAPIKey:       os.Getenv("ARK_API_KEY"),
-		ArkModel:        os.Getenv("ARK_MODEL"),
-		ArkBaseURL:      os.Getenv("ARK_BASE_URL"),
-		GitHubToken:     firstNonEmpty(os.Getenv("GITHUB_TOKEN"), os.Getenv("GH_TOKEN")),
-		MaxIterations:   envInt("MAX_ITERATIONS", 16),
-		SessionTTL:      time.Duration(envInt("SESSION_TTL_HOURS", 168)) * time.Hour,
+		BotID:                   envOr("BOT_ID", "bot-local-1"),
+		BotName:                 envOr("BOT_NAME", "PersonalAgent"),
+		BotPublicURL:            envOr("BOT_PUBLIC_URL", "http://127.0.0.1:12120"),
+		Host:                    envOr("HOST", "127.0.0.1"),
+		Port:                    envInt("PORT", 12120),
+		DataDir:                 envOr("DATA_DIR", "./data"),
+		DocsRoot:                envOr("BOT_DOCS_ROOT", "./data/docs"),
+		ResumeRoot:              envOr("BOT_RESUME_ROOT", "./data/resumes"),
+		A2ABearerToken:          firstNonEmpty(os.Getenv("A2A_BEARER_TOKEN"), os.Getenv("A2A_SHARED_SECRET"), "dev-a2a-secret-change-me"),
+		A2APath:                 envOr("A2A_PATH", "/a2a"),
+		A2AHostRegistry:         envBool("A2A_HOST_REGISTRY", true),
+		A2AAutoRegister:         envBool("A2A_AUTO_REGISTER", true),
+		A2ARegistryURLs:         splitCSV(os.Getenv("A2A_REGISTRY_URL")),
+		A2ARegistryHeartbeatSec: envInt("A2A_REGISTRY_HEARTBEAT_SEC", 60),
+		ModelType:               modelType,
+		OpenAIByAzure:           os.Getenv("OPENAI_BY_AZURE") == "true",
+		ArkAPIKey:               os.Getenv("ARK_API_KEY"),
+		ArkModel:                os.Getenv("ARK_MODEL"),
+		ArkBaseURL:              os.Getenv("ARK_BASE_URL"),
+		GitHubToken:             firstNonEmpty(os.Getenv("GITHUB_TOKEN"), os.Getenv("GH_TOKEN")),
+		MaxIterations:           envInt("MAX_ITERATIONS", 16),
+		SessionTTL:              time.Duration(envInt("SESSION_TTL_HOURS", 168)) * time.Hour,
 	}
 	cfg.SQLitePath = envOr("SQLITE_PATH", cfg.DataDir+"/bot.db")
 	applyModelDefaults(cfg)
@@ -143,4 +153,34 @@ func firstNonEmpty(vals ...string) string {
 		}
 	}
 	return ""
+}
+
+func envBool(key string, def bool) bool {
+	v := strings.TrimSpace(strings.ToLower(os.Getenv(key)))
+	if v == "" {
+		return def
+	}
+	switch v {
+	case "1", "true", "yes", "on":
+		return true
+	case "0", "false", "no", "off":
+		return false
+	default:
+		return def
+	}
+}
+
+func splitCSV(s string) []string {
+	if strings.TrimSpace(s) == "" {
+		return nil
+	}
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }

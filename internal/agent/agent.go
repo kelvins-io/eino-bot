@@ -24,13 +24,13 @@ import (
 type Runtime struct {
 	Cfg     *config.Config
 	Memory  *memory.Service
-	A2A     *a2a.Client
+	A2A     *a2a.Service
 	DB      *store.DB
 	Runner  *adk.Runner
 	OwnerID string
 }
 
-func NewRuntime(ctx context.Context, cfg *config.Config, db *store.DB, mem *memory.Service, a2aClient *a2a.Client, ownerID string) (*Runtime, error) {
+func NewRuntime(ctx context.Context, cfg *config.Config, db *store.DB, mem *memory.Service, a2aSvc *a2a.Service, ownerID string) (*Runtime, error) {
 	if ownerID == "" {
 		ownerID = "user-default"
 	}
@@ -42,7 +42,7 @@ func NewRuntime(ctx context.Context, cfg *config.Config, db *store.DB, mem *memo
 		return nil, err
 	}
 	toolsList, err := bottools.All(&bottools.Deps{
-		Cfg: cfg, Memory: mem, A2A: a2aClient, OwnerID: ownerID,
+		Cfg: cfg, Memory: mem, A2A: a2aSvc, OwnerID: ownerID,
 	})
 	if err != nil {
 		return nil, err
@@ -68,7 +68,7 @@ func NewRuntime(ctx context.Context, cfg *config.Config, db *store.DB, mem *memo
 		CheckPointStore: store.NewCheckPointStore(db),
 	})
 	return &Runtime{
-		Cfg: cfg, Memory: mem, A2A: a2aClient, DB: db, Runner: runner, OwnerID: ownerID,
+		Cfg: cfg, Memory: mem, A2A: a2aSvc, DB: db, Runner: runner, OwnerID: ownerID,
 	}, nil
 }
 
@@ -82,7 +82,7 @@ func instruction(cfg *config.Config, ownerID string) string {
 2. 需要时调用 get_profile / search_memory 回顾画像，并用 update_profile 维护显示名、摘要、bot 联系方式。
 3. 用户授权后，用 analyze_docs 分析文档库（%s），用 search_resumes 检索简历库（%s）。
 4. 用 search_github / analyze_github_user 在 GitHub 发现人选与技能线索。
-5. 用 contact_peer_bot 与其他用户的助手 bot 交换信息（handshake / profile.inquiry / recruit.inquiry）。
+5. 用 contact_peer_bot 通过公开 A2A 协议（Agent Card + JSON-RPC SendMessage）与其他助手交换信息（handshake / profile.inquiry / recruit.inquiry）。endpoint 填对方根 URL。
 6. 招聘场景：用 save_job_requirement 细化并记住要求 → 搜索简历/GitHub → 联系对方 bot → upsert_candidate 打分 → rank_top_candidates 标记 Top3。
 
 ## 行为约束
@@ -123,3 +123,4 @@ func ToolsOf(rt *Runtime) []tool.BaseTool {
 	})
 	return list
 }
+

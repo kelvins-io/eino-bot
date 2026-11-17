@@ -178,8 +178,8 @@ func newListCandidatesTool(deps *Deps) (tool.BaseTool, error) {
 }
 
 type contactPeerIn struct {
-	Endpoint  string         `json:"endpoint" jsonschema_description:"对方 bot 根 URL，如 http://127.0.0.1:8081"`
-	ToBotID   string         `json:"to_bot_id" jsonschema_description:"对方 bot_id"`
+	Endpoint  string         `json:"endpoint" jsonschema_description:"对方 bot 根 URL（会拉取 /.well-known/agent-card.json），如 http://127.0.0.1:8081"`
+	ToBotID   string         `json:"to_bot_id,omitempty" jsonschema_description:"对方 bot_id，仅用于日志"`
 	Intent    string         `json:"intent" jsonschema_description:"handshake/profile.inquiry/recruit.inquiry"`
 	Payload   map[string]any `json:"payload,omitempty"`
 	JobID     string         `json:"job_id,omitempty"`
@@ -188,7 +188,7 @@ type contactPeerIn struct {
 
 func newContactPeerBotTool(deps *Deps) (tool.BaseTool, error) {
 	return utils.InferTool("contact_peer_bot",
-		"与其他用户的助手 bot 进行 A2A 信息交换（签名校验）。对方离线时返回 reachable=false，不要中断整轮招聘流程。",
+		"通过公开 A2A 协议（Agent Card 发现 + JSON-RPC SendMessage）联系对方助手。对方离线时返回 reachable=false，不要中断整轮招聘流程。",
 		func(ctx context.Context, in *contactPeerIn) (string, error) {
 			payload := in.Payload
 			if payload == nil {
@@ -200,21 +200,25 @@ func newContactPeerBotTool(deps *Deps) (tool.BaseTool, error) {
 			if in.Candidate != "" {
 				payload["about_candidate"] = in.Candidate
 			}
-			reply, err := deps.A2A.Send(ctx, in.Endpoint, in.ToBotID, in.Intent, payload)
+			intent := in.Intent
+			if intent == "" {
+				intent = "handshake"
+			}
+			reply, err := deps.A2A.Send(ctx, in.Endpoint, in.ToBotID, intent, payload)
 			if err != nil {
-				// Soft-fail：让 Agent 继续用简历/GitHub 信息打分，而不是整轮 NodeRunError。
 				return mustJSON(map[string]any{
 					"reachable":     false,
 					"endpoint":      in.Endpoint,
 					"to_bot_id":     in.ToBotID,
-					"intent":        in.Intent,
+					"intent":        intent,
 					"error":         err.Error(),
-					"hint":          "对方助手 bot 未启动或不可达。可先基于简历内容 upsert_candidate 打分，并提示用户 make peer 启动联调实例。",
+					"hint":          "无法解析 Agent Card 或 SendMessage 失败。可先基于简历内容 upsert_candidate，并确认对方已 make peer 且共享 A2A_BEARER_TOKEN。",
 					"fallback_used": true,
 				})
 			}
 			return mustJSON(map[string]any{
 				"reachable": true,
+				"protocol":  "a2a",
 				"reply":     reply,
 			})
 		})

@@ -11,7 +11,7 @@ import (
 type Deps struct {
 	Cfg     *config.Config
 	Memory  *memory.Service
-	A2A     *a2a.Client
+	A2A     *a2a.Service
 	OwnerID string
 }
 

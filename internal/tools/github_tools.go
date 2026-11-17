@@ -125,7 +125,7 @@ func newAnalyzeGitHubUserTool(deps *Deps) (tool.BaseTool, error) {
 					_, _ = deps.Memory.UpsertFact(ctx, owner, "skill",
 						fmt.Sprintf("GitHub 常用语言 %s（近仓出现 %d 次）", lang, n), "github", 0.75)
 				}
-				if blog != "" && (strings.Contains(blog, "http") || strings.Contains(blog, "/v1/a2a")) {
+				if blog != "" && (strings.Contains(blog, "http") || strings.Contains(blog, "agent-card") || strings.Contains(blog, "/a2a")) {
 					_ = deps.Memory.UpdateProfileMeta(ctx, owner, name, "", blog, map[string]string{"github": login})
 				} else if name != "" {
 					_ = deps.Memory.UpdateProfileMeta(ctx, owner, name, "", "", map[string]string{"github": login})

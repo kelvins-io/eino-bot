@@ -16,8 +16,13 @@
 | POST | `/v1/chat` | 文字对话（JSON） |
 | POST | `/v1/voice` | 语音上传转写，默认可直接跑 Agent |
 | GET | `/v1/profile` | 查询人物画像 |
-| GET | `/v1/a2a/discover` | A2A 能力发现 |
-| POST | `/v1/a2a/message` | A2A 签名消息收发 |
+| GET | `/.well-known/agent-card.json` | 公开 A2A Agent Card |
+| POST | `/a2a` | A2A JSON-RPC（`SendMessage` 等） |
+| GET | `/v1/a2a/discover` | 兼容发现摘要（指向 Agent Card） |
+| POST | `/registry/register` | 注册 Agent Card 到本机目录 |
+| POST | `/registry/heartbeat` | Registry 心跳 |
+| POST | `/registry/unregister` | 注销 |
+| GET | `/registry/agents` | 已注册 Agent 列表 |
 
 ### 人物记忆与画像
 
@@ -39,12 +44,17 @@
 - 用户不存在（404）等失败时软返回 `found=false` / `ok=false`，不中断整轮
 - 可选 `GITHUB_TOKEN` 提高配额
 
-### Bot 间 A2A
+### Bot 间 A2A（公开标准）
 
-- HMAC 签名信封：`id/from_bot_id/to_bot_id/intent/payload/timestamp/signature`
-- 双方共享 `A2A_SHARED_SECRET`
-- 常用 intent：`handshake`、`profile.inquiry`、`recruit.inquiry`
-- `contact_peer_bot`：对方离线返回 `reachable=false`，招聘流程可继续用简历打分
+基于 [A2A Protocol](https://a2a-protocol.org/latest/specification/) + 官方 Go SDK [`a2aproject/a2a-go`](https://github.com/a2aproject/a2a-go)：
+
+- 发现：`GET /.well-known/agent-card.json`
+- 调用：JSON-RPC `SendMessage`（默认路径 `/a2a`）
+- 鉴权：可选 `Authorization: Bearer`（`A2A_BEARER_TOKEN`，兼容旧名 `A2A_SHARED_SECRET`）
+- Skills：`profile.exchange`、`recruit.inquiry`
+- `contact_peer_bot`：先 Resolve Agent Card，再 SendMessage；对方离线返回 `reachable=false`
+- **启动自动注册**：默认 `A2A_AUTO_REGISTER=true`，进程起来后把自己写进本机 Registry（或 `A2A_REGISTRY_URL`），并按 `A2A_REGISTRY_HEARTBEAT_SEC` 心跳；退出时注销
+- 本机目录：`A2A_HOST_REGISTRY=true` 时提供 `/registry/*` 与 `GET /agents`
 
 ### 招聘闭环
 
@@ -90,7 +100,8 @@
                                   ├─ analyze_docs / search_resumes
                                   ├─ search_github / analyze_github_user
                                   ├─ save_job_requirement / upsert_candidate / rank_top_candidates
-                                  └─ contact_peer_bot ──► 其他 Bot /v1/a2a/message
+                                  └─ contact_peer_bot ──► Resolve Agent Card
+                                                       └─ JSON-RPC SendMessage (/a2a)
                                                      ▲
                                   GORM + SQLite（画像 / 招聘 / checkpoint / A2A 日志）
 ```
@@ -145,7 +156,12 @@ curl -s -X POST http://127.0.0.1:12120/v1/voice \
 | `BOT_ID` / `BOT_NAME` / `BOT_PUBLIC_URL` | 本 bot 身份与对外地址 |
 | `OWNER_ID` | 默认画像归属人 |
 | `HOST` / `PORT` | 监听地址，默认 `127.0.0.1:12120` |
-| `A2A_SHARED_SECRET` | A2A 信任域共享密钥 |
+| `A2A_BEARER_TOKEN` | A2A Bearer（兼容 `A2A_SHARED_SECRET`） |
+| `A2A_PATH` | JSON-RPC 路径，默认 `/a2a` |
+| `A2A_AUTO_REGISTER` | 启动后自动注册，默认 `true` |
+| `A2A_HOST_REGISTRY` | 本机挂载 Registry API，默认 `true` |
+| `A2A_REGISTRY_URL` | 外部 Registry 根 URL（逗号分隔）；空则注册到 `BOT_PUBLIC_URL` |
+| `A2A_REGISTRY_HEARTBEAT_SEC` | 心跳间隔秒，默认 `60` |
 | `BOT_DOCS_ROOT` / `BOT_RESUME_ROOT` | 授权文档 / 简历目录 |
 | `SQLITE_PATH` | 数据库路径，默认 `./data/bot.db` |
 | `MODEL_TYPE` | `siliconflow` / `openai` / `ark` |
@@ -166,7 +182,7 @@ internal/agent/          Eino ChatModelAgent 装配与指令
 internal/memory/         画像 / 招聘业务与去重
 internal/store/          GORM 模型、迁移、checkpoint
 internal/tools/          Agent 工具集
-internal/a2a/            Bot 间 HMAC 协议
+internal/a2a/            公开 A2A（Agent Card + JSON-RPC）
 internal/asr/            语音转写客户端
 internal/server/         Hertz HTTP / SSE
 internal/config/         环境变量加载
@@ -178,4 +194,4 @@ data/docs|resumes/       授权样例库
 - 飞书 / 企微等 IM 通道
 - 多实例 Postgres
 - 真实候选人 GitHub 深度画像与自动建档
-- 替换为公开标准 A2A 协议
+- A2A streaming / push notification / OAuth2 完整企业鉴权

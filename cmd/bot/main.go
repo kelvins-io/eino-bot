@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/joho/godotenv"
 
@@ -37,11 +38,33 @@ func main() {
 	defer db.Close()
 
 	mem := memory.New(db)
-	a2aClient := a2a.NewClient(cfg.BotID, cfg.BotName, cfg.BotPublicURL, cfg.A2ASharedSecret, db)
 	ownerID := envOr("OWNER_ID", "user-default")
 
-	ctx := context.Background()
-	rt, err := agent.NewRuntime(ctx, cfg, db, mem, a2aClient, ownerID)
+	a2aSvc := a2a.NewService(a2a.Config{
+		BotID: cfg.BotID, BotName: cfg.BotName, PublicURL: cfg.BotPublicURL,
+		BearerToken: cfg.A2ABearerToken, A2APath: cfg.A2APath, DB: db,
+		HostRegistry: cfg.A2AHostRegistry,
+		Registration: a2a.RegistrationConfig{
+			Enabled:           cfg.A2AAutoRegister,
+			RegistryURLs:      cfg.A2ARegistryURLs,
+			HeartbeatInterval: time.Duration(cfg.A2ARegistryHeartbeatSec) * time.Second,
+		},
+		ProfileFn: func(ctx context.Context) string {
+			p, err := mem.GetProfile(ctx, ownerID)
+			if err != nil || p == nil {
+				return ""
+			}
+			if p.Summary != "" {
+				return p.Summary
+			}
+			return p.DisplayName
+		},
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	rt, err := agent.NewRuntime(ctx, cfg, db, mem, a2aSvc, ownerID)
 	if err != nil {
 		log.Fatalf("agent: %v", err)
 	}
@@ -49,11 +72,18 @@ func main() {
 	asrClient := asr.New(cfg.ASRBaseURL, cfg.ASRAPIKey, cfg.ASRModel)
 	srv := server.New(rt, asrClient)
 
+	// 启动后自动向 Registry 注册本 Agent Card，并保持心跳。
+	a2aSvc.StartAutoRegister(ctx)
+
 	go func() {
 		ch := make(chan os.Signal, 1)
 		signal.Notify(ch, syscall.SIGINT, syscall.SIGTERM)
 		sig := <-ch
 		log.Printf("received %v, shutting down", sig)
+		stopCtx, stopCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer stopCancel()
+		a2aSvc.StopAutoRegister(stopCtx)
+		cancel()
 		os.Exit(0)
 	}()
 
