@@ -22,7 +22,9 @@
 | POST | `/registry/register` | 注册 Agent Card 到本机目录 |
 | POST | `/registry/heartbeat` | Registry 心跳 |
 | POST | `/registry/unregister` | 注销 |
-| GET | `/registry/agents` | 已注册 Agent 列表 |
+| GET | `/registry/agents` | 已注册 Agent 列表（`?skill_tag=人才招聘` 按互动率排序） |
+| POST | `/v1/recruit/market/callback` | 市场招聘任务结果回调 |
+| GET | `/v1/recruit/market/tasks` | 查询市场招聘任务 |
 
 ### 人物记忆与画像
 
@@ -59,7 +61,9 @@
 ### 招聘闭环
 
 1. `save_job_requirement` / `update_job_requirement` 细化并持久化需求  
-2. `search_resumes` / `search_github` 找人  
+2. 找人（可并行）：
+   - 本地：`search_resumes` / `search_github`
+   - **A2A 市场（可选）**：`search_a2a_market_agents`（skill 标签默认「人才招聘」，按互动率排序）→ `start_market_recruit_task` 派任 → 对方回调 `POST /v1/recruit/market/callback` 或 `poll_market_recruit_task` 询问 → `merge_recruit_findings` 与本地扫描合并  
 3. `contact_peer_bot` 联系对方助手（可选）  
 4. `upsert_candidate` 打分  
 5. `rank_top_candidates` / `list_candidates` 标记 Top3  
@@ -81,6 +85,10 @@
 | `upsert_candidate` | 写入/更新候选人 |
 | `list_candidates` | 列出候选人 |
 | `rank_top_candidates` | 按分标记 Top N（默认 3） |
+| `search_a2a_market_agents` | 按 skill 标签搜人才招聘市场 Agent（互动率优先） |
+| `start_market_recruit_task` | 向市场 Agent 发起招聘任务 |
+| `poll_market_recruit_task` | 轮询/询问市场任务结果 |
+| `merge_recruit_findings` | 合并市场结果与本地简历扫描 |
 | `contact_peer_bot` | A2A 信息交换 |
 
 ### 工程基础
@@ -145,7 +153,8 @@ curl -s -X POST http://127.0.0.1:12120/v1/voice \
    - `make peer` → `8081`（对应样例「陈明」）
    - `make peer2` → `8082`（「李华」）
    - `make peer3` → `8083`（「王菲」）
-3. 对招聘 bot：细化 AI FDE 要求并记忆 → 搜简历库 →（可选）联系对方 bot → 给出 Top3
+   - `make market` → `8090`（人才招聘市场 Agent，注册到 `12120`）
+3. 对招聘 bot：细化 AI FDE 要求 → 搜简历 / 搜 A2A 市场并派任 → 合并结果 →（可选）联系对方 bot → 给出 Top3
 
 说明：样例简历里的 GitHub login 为演示占位，真实平台上可能 404；Agent 会回退到简历内容继续匹配。
 
@@ -162,6 +171,7 @@ curl -s -X POST http://127.0.0.1:12120/v1/voice \
 | `A2A_HOST_REGISTRY` | 本机挂载 Registry API，默认 `true` |
 | `A2A_REGISTRY_URL` | 外部 Registry 根 URL（逗号分隔）；空则注册到 `BOT_PUBLIC_URL` |
 | `A2A_REGISTRY_HEARTBEAT_SEC` | 心跳间隔秒，默认 `60` |
+| `A2A_MARKET_RECRUIT_MODE` | `true` 时本 bot 作为「人才招聘」市场 Agent |
 | `BOT_DOCS_ROOT` / `BOT_RESUME_ROOT` | 授权文档 / 简历目录 |
 | `SQLITE_PATH` | 数据库路径，默认 `./data/bot.db` |
 | `MODEL_TYPE` | `siliconflow` / `openai` / `ark` |

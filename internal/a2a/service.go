@@ -43,24 +43,30 @@ type Service struct {
 	cardHandler    http.Handler
 	profileFn      ProfileSummaryFunc
 
-	registry   *registryStore
+	registry     *registryStore
 	hostRegistry bool
-	regCfg     RegistrationConfig
-	regMu      sync.RWMutex
-	regTargets []string
+	regCfg       RegistrationConfig
+	regMu        sync.RWMutex
+	regTargets   []string
+
+	// When true, this bot acts as a 人才招聘 marketplace agent.
+	marketRecruitMode bool
+	marketMu          sync.RWMutex
+	marketTasks       map[string]marketProviderTask
 }
 
 // Config configures the A2A service.
 type Config struct {
-	BotID        string
-	BotName      string
-	PublicURL    string
-	BearerToken  string
-	A2APath      string
-	DB           *store.DB
-	ProfileFn    ProfileSummaryFunc
-	HostRegistry bool
-	Registration RegistrationConfig
+	BotID             string
+	BotName           string
+	PublicURL         string
+	BearerToken       string
+	A2APath           string
+	DB                *store.DB
+	ProfileFn         ProfileSummaryFunc
+	HostRegistry      bool
+	Registration      RegistrationConfig
+	MarketRecruitMode bool
 }
 
 func NewService(cfg Config) *Service {
@@ -77,14 +83,39 @@ func NewService(cfg Config) *Service {
 	s := &Service{
 		BotID: cfg.BotID, BotName: cfg.BotName, PublicURL: base,
 		BearerToken: cfg.BearerToken, A2APath: path, DB: cfg.DB,
-		HTTPClient:   &http.Client{Timeout: 30 * time.Second},
-		profileFn:    cfg.ProfileFn,
-		registry:     newRegistryStore(),
-		hostRegistry: cfg.HostRegistry,
-		regCfg:       cfg.Registration,
+		HTTPClient:        &http.Client{Timeout: 30 * time.Second},
+		profileFn:         cfg.ProfileFn,
+		registry:          newRegistryStore(),
+		hostRegistry:      cfg.HostRegistry,
+		regCfg:            cfg.Registration,
+		marketRecruitMode: cfg.MarketRecruitMode,
+		marketTasks:       map[string]marketProviderTask{},
 	}
 	if s.regCfg.HeartbeatInterval <= 0 {
 		s.regCfg.HeartbeatInterval = 60 * time.Second
+	}
+
+	skills := []a2a.AgentSkill{
+		{
+			ID: "profile.exchange", Name: "Profile Exchange",
+			Description: "Share an authorized profile summary",
+			Tags:        []string{"profile", "memory"},
+			Examples:    []string{"profile.inquiry", "handshake"},
+		},
+		{
+			ID: "recruit.inquiry", Name: "Recruiting Inquiry",
+			Description: "Answer recruiting-related profile questions",
+			Tags:        []string{"recruit", "hiring"},
+			Examples:    []string{"recruit.inquiry"},
+		},
+	}
+	if cfg.MarketRecruitMode {
+		skills = append(skills, a2a.AgentSkill{
+			ID: "talent.recruit.market", Name: "人才招聘",
+			Description: "A2A marketplace talent recruiting: accept recruit.task.create and return/callback candidate lists",
+			Tags:        []string{"人才招聘", "recruit", "hiring", "market"},
+			Examples:    []string{"recruit.task.create", "recruit.task.status"},
+		})
 	}
 
 	card := &a2a.AgentCard{
@@ -97,21 +128,8 @@ func NewService(cfg Config) *Service {
 		DefaultInputModes:  []string{"text/plain", "application/json"},
 		DefaultOutputModes: []string{"text/plain", "application/json"},
 		Capabilities:       a2a.AgentCapabilities{Streaming: false},
-		Skills: []a2a.AgentSkill{
-			{
-				ID: "profile.exchange", Name: "Profile Exchange",
-				Description: "Share an authorized profile summary",
-				Tags:        []string{"profile", "memory"},
-				Examples:    []string{"profile.inquiry", "handshake"},
-			},
-			{
-				ID: "recruit.inquiry", Name: "Recruiting Inquiry",
-				Description: "Answer recruiting-related profile questions",
-				Tags:        []string{"recruit", "hiring"},
-				Examples:    []string{"recruit.inquiry"},
-			},
-		},
-		Provider: &a2a.AgentProvider{Org: "eino-bot"},
+		Skills:             skills,
+		Provider:           &a2a.AgentProvider{Org: "eino-bot"},
 	}
 	if cfg.BearerToken != "" {
 		card.SecuritySchemes = a2a.NamedSecuritySchemes{
@@ -152,6 +170,8 @@ func (s *Service) DiscoverSummary() map[string]any {
 		"registry":         s.PublicURL + "/registry/agents",
 		"host_registry":    s.hostRegistry,
 		"auto_register":    s.regCfg.Enabled,
+		"market_recruit":   s.marketRecruitMode,
+		"market_skill_tag": DefaultMarketSkillTag,
 		"transport":        string(a2a.TransportProtocolJSONRPC),
 		"skills":           []string{"profile.exchange", "recruit.inquiry"},
 		"auth":             map[string]any{"bearer_required": s.BearerToken != ""},
@@ -210,8 +230,14 @@ func (s *Service) Send(ctx context.Context, peerBaseURL, toBotID, intent string,
 	raw, _ := json.Marshal(out)
 	_ = s.logMessage(ctx, "out", toBotID, base, intent, string(reqBody), "ok")
 	_ = s.logMessage(ctx, "in", card.Name, base, intent+".reply", string(raw), "ok")
+	if s.registry != nil {
+		s.registry.RecordInteraction(base)
+	}
 	return out, nil
 }
+
+// MarketRecruitMode reports whether this bot advertises the 人才招聘 marketplace skill.
+func (s *Service) MarketRecruitMode() bool { return s.marketRecruitMode }
 
 func (s *Service) logMessage(ctx context.Context, direction, peerID, endpoint, intent, payload, status string) error {
 	if s.DB == nil {

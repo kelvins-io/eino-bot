@@ -94,13 +94,51 @@ func (s *Service) handleRegistryAgents(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	agents := s.registry.List()
+	skillTag := strings.TrimSpace(r.URL.Query().Get("skill_tag"))
+	limit := 20
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := parsePositiveInt(v); err == nil {
+			limit = n
+		}
+	}
+	var agents []RegisteredAgent
+	if skillTag != "" {
+		agents = s.registry.SearchBySkillTag(skillTag, limit)
+	} else {
+		agents = s.registry.List()
+		sortAgentsByInteraction(agents)
+		if len(agents) > limit {
+			agents = agents[:limit]
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"ok":     true,
-		"agents": agents,
-		"count":  len(agents),
+		"ok":        true,
+		"agents":    agents,
+		"count":     len(agents),
+		"skill_tag": skillTag,
+		"sorted_by": "interaction_count_desc",
 	})
 }
+
+func parsePositiveInt(s string) (int, error) {
+	n := 0
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return 0, errBadInt
+		}
+		n = n*10 + int(c-'0')
+	}
+	if n <= 0 {
+		return 0, errBadInt
+	}
+	return n, nil
+}
+
+var errBadInt = errString("bad int")
+
+type errString string
+
+func (e errString) Error() string { return string(e) }
 
 func (s *Service) handleRegistryAgentsAlias(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {

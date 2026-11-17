@@ -28,10 +28,43 @@ func (s *Service) execute(ctx context.Context, execCtx *a2asrv.ExecutorContext) 
 			replyData["profile_summary"] = summary
 			replyData["note"] = "仅返回对方授权范围内的摘要信息"
 		case "handshake", "":
-			replyData["capabilities"] = []string{"profile.exchange", "recruit.inquiry"}
+			caps := []string{"profile.exchange", "recruit.inquiry"}
+			if s.marketRecruitMode {
+				caps = append(caps, "talent.recruit.market")
+			}
+			replyData["capabilities"] = caps
 			if intent == "" {
 				replyData["intent"] = "handshake"
 			}
+		case intentTaskCreate:
+			if !s.marketRecruitMode {
+				replyData["accepted"] = false
+				replyData["error"] = "this agent is not a 人才招聘 market agent"
+			} else {
+				taskID, _ := payload["task_id"].(string)
+				replyData["task_id"] = taskID
+				replyData["status"] = "accepted"
+				replyData["note"] = "task accepted; results via callback or recruit.task.status poll"
+				go s.fulfillMarketRecruitAsProvider(context.Background(), payload)
+			}
+		case intentTaskStatus:
+			taskID, _ := payload["task_id"].(string)
+			if t, ok := s.getProviderTask(taskID); ok {
+				replyData["task_id"] = taskID
+				replyData["status"] = t.Status
+				replyData["candidates"] = t.Results
+			} else if s.marketRecruitMode {
+				replyData["task_id"] = taskID
+				replyData["status"] = "pending"
+				replyData["candidates"] = []any{}
+			} else {
+				replyData["accepted"] = false
+				replyData["error"] = "unknown task or not a market agent"
+			}
+		case intentTaskResult:
+			// Peer pushing results over A2A (alternative to HTTP callback).
+			replyData["received"] = true
+			replyData["note"] = "prefer HTTP callback /v1/recruit/market/callback on the requester"
 		default:
 			replyData["echo_intent"] = intent
 			replyData["received_payload"] = payload

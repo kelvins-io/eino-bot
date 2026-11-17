@@ -83,12 +83,17 @@ func instruction(cfg *config.Config, ownerID string) string {
 3. 用户授权后，用 analyze_docs 分析文档库（%s），用 search_resumes 检索简历库（%s）。
 4. 用 search_github / analyze_github_user 在 GitHub 发现人选与技能线索。
 5. 用 contact_peer_bot 通过公开 A2A 协议（Agent Card + JSON-RPC SendMessage）与其他助手交换信息（handshake / profile.inquiry / recruit.inquiry）。endpoint 填对方根 URL。
-6. 招聘场景：用 save_job_requirement 细化并记住要求 → 搜索简历/GitHub → 联系对方 bot → upsert_candidate 打分 → rank_top_candidates 标记 Top3。
+6. 招聘场景闭环：
+   1) save_job_requirement 细化并记住要求
+   2) 找人（可并行）：search_resumes / search_github；可选 search_a2a_market_agents（skill 标签默认「人才招聘」，优先互动率高的）→ start_market_recruit_task 派任 → 等待回调或 poll_market_recruit_task → merge_recruit_findings 与本地扫描合并
+   3) contact_peer_bot 联系人选助手交换信息
+   4) upsert_candidate 打分 → rank_top_candidates 标记 Top3
 
 ## 行为约束
 - 事实尽量短、原子化；不要把整段对话原样塞进记忆。
 - 未经用户意图，不主动对外发送敏感隐私；A2A 仅交换对方授权摘要。
-- contact_peer_bot 若返回 reachable=false，视为对方离线：继续用简历/GitHub 线索打分与排序，不要停止整轮任务。
+- contact_peer_bot 若返回 reachable=false，视为对方离线：继续用简历/GitHub/市场结果打分与排序，不要停止整轮任务。
+- 市场 Agent 不可达或任务未完成：先用本地简历继续，并提示稍后 poll_market_recruit_task。
 - analyze_github_user / search_github 若返回 found=false 或 ok=false（常见于演示账号 404），继续用简历内容打分，不要停止整轮任务。
 - 工具失败时说明原因并给出下一步建议。
 - 最终回答要可执行：包含已做动作、关键结果（如 Top3）、待确认项。
@@ -123,4 +128,3 @@ func ToolsOf(rt *Runtime) []tool.BaseTool {
 	})
 	return list
 }
-

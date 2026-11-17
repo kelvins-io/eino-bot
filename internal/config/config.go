@@ -31,6 +31,7 @@ type Config struct {
 	A2AAutoRegister         bool
 	A2ARegistryURLs         []string
 	A2ARegistryHeartbeatSec int
+	A2AMarketRecruitMode    bool
 	ModelType               string
 	OpenAIAPIKey            string
 	OpenAIModel             string
@@ -64,6 +65,7 @@ func Load() (*Config, error) {
 		A2AAutoRegister:         envBool("A2A_AUTO_REGISTER", true),
 		A2ARegistryURLs:         splitCSV(os.Getenv("A2A_REGISTRY_URL")),
 		A2ARegistryHeartbeatSec: envInt("A2A_REGISTRY_HEARTBEAT_SEC", 60),
+		A2AMarketRecruitMode:    envBool("A2A_MARKET_RECRUIT_MODE", false),
 		ModelType:               modelType,
 		OpenAIByAzure:           os.Getenv("OPENAI_BY_AZURE") == "true",
 		ArkAPIKey:               os.Getenv("ARK_API_KEY"),

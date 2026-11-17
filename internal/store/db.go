@@ -72,5 +72,6 @@ func (d *DB) migrate() error {
 		&JobRequirementRow{},
 		&CandidateRow{},
 		&A2AMessageRow{},
+		&MarketRecruitTaskRow{},
 	)
 }

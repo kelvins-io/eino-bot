@@ -92,3 +92,19 @@ type A2AMessageRow struct {
 }
 
 func (A2AMessageRow) TableName() string { return "a2a_messages" }
+
+// MarketRecruitTaskRow tracks a delegated recruiting task on an A2A market agent.
+type MarketRecruitTaskRow struct {
+	ID            string `gorm:"primaryKey;size:64" json:"id"`
+	JobID         string `gorm:"size:64;not null;index:idx_market_task_job" json:"job_id"`
+	AgentURL      string `gorm:"size:512;not null" json:"agent_url"`
+	AgentBotID    string `gorm:"size:128;not null;default:''" json:"agent_bot_id"`
+	Status        string `gorm:"size:32;not null;default:pending;index" json:"status"` // pending|running|completed|failed
+	CallbackToken string `gorm:"size:128;not null;default:''" json:"callback_token"`
+	ResultJSON    string `gorm:"type:text;not null;default:'[]'" json:"result_json"`
+	ErrorMsg      string `gorm:"type:text;not null;default:''" json:"error_msg"`
+	CreatedAt     string `gorm:"size:64;not null" json:"created_at"`
+	UpdatedAt     string `gorm:"size:64;not null" json:"updated_at"`
+}
+
+func (MarketRecruitTaskRow) TableName() string { return "market_recruit_tasks" }

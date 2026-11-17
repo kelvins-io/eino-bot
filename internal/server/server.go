@@ -52,6 +52,8 @@ func (s *Server) routes() {
 	s.h.POST("/v1/chat", s.handleChatJSON)
 	s.h.POST("/v1/voice", s.handleVoice)
 	s.h.GET("/v1/profile", s.handleProfile)
+	s.h.POST("/v1/recruit/market/callback", s.handleMarketRecruitCallback)
+	s.h.GET("/v1/recruit/market/tasks", s.handleMarketRecruitTasks)
 
 	// Public A2A protocol (Agent Card + JSON-RPC).
 	s.h.GET(a2asrv.WellKnownAgentCardPath, adaptor.HertzHandler(s.rt.A2A.CardHandler()))
@@ -103,8 +105,76 @@ func (s *Server) handleInfo(ctx context.Context, c *app.RequestContext) {
 			"GET /v1/profile?owner_id=...",
 			"GET " + a2asrv.WellKnownAgentCardPath,
 			"POST " + s.rt.A2A.A2APath + " (A2A JSON-RPC)",
+			"POST /v1/recruit/market/callback",
+			"GET /v1/recruit/market/tasks?job_id=...",
 		},
 	})
+}
+
+type marketCallbackBody struct {
+	TaskID     string           `json:"task_id"`
+	JobID      string           `json:"job_id"`
+	Status     string           `json:"status"`
+	Token      string           `json:"token"`
+	Candidates []map[string]any `json:"candidates"`
+	Error      string           `json:"error"`
+}
+
+func (s *Server) handleMarketRecruitCallback(ctx context.Context, c *app.RequestContext) {
+	raw, err := c.Body()
+	if err != nil {
+		c.JSON(consts.StatusBadRequest, map[string]any{"ok": false, "error": "empty body"})
+		return
+	}
+	var body marketCallbackBody
+	if err := json.Unmarshal(raw, &body); err != nil {
+		c.JSON(consts.StatusBadRequest, map[string]any{"ok": false, "error": "invalid json"})
+		return
+	}
+	token := body.Token
+	if token == "" {
+		token = string(c.GetHeader("X-Callback-Token"))
+	}
+	var taskID string
+	if token != "" {
+		t, err := s.rt.Memory.GetMarketRecruitTaskByToken(ctx, token)
+		if err != nil {
+			c.JSON(consts.StatusUnauthorized, map[string]any{"ok": false, "error": "invalid callback token"})
+			return
+		}
+		taskID = t.ID
+	} else if body.TaskID != "" {
+		taskID = body.TaskID
+	} else {
+		c.JSON(consts.StatusBadRequest, map[string]any{"ok": false, "error": "task_id or token required"})
+		return
+	}
+	updated, err := s.rt.Memory.CompleteMarketRecruitTask(ctx, taskID, body.Candidates, body.Error)
+	if err != nil {
+		c.JSON(consts.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	c.JSON(consts.StatusOK, map[string]any{"ok": true, "task": updated})
+}
+
+func (s *Server) handleMarketRecruitTasks(ctx context.Context, c *app.RequestContext) {
+	jobID := string(c.Query("job_id"))
+	taskID := string(c.Query("task_id"))
+	if taskID != "" {
+		t, err := s.rt.Memory.GetMarketRecruitTask(ctx, taskID)
+		if err != nil {
+			c.JSON(consts.StatusNotFound, map[string]any{"ok": false, "error": err.Error()})
+			return
+		}
+		c.JSON(consts.StatusOK, map[string]any{"ok": true, "task": t})
+		return
+	}
+	list, err := s.rt.Memory.ListMarketRecruitTasks(ctx, jobID)
+	if err != nil {
+		c.JSON(consts.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	c.JSON(consts.StatusOK, map[string]any{"ok": true, "tasks": list})
 }
 
 func (s *Server) handleProfile(ctx context.Context, c *app.RequestContext) {
