@@ -1,4 +1,7 @@
-.PHONY: tidy run peer test build
+.PHONY: tidy run peer peer2 peer3 market test build \
+	docker-bin docker-build docker-up docker-down docker-logs
+
+ENV_DOCKER ?= .env.docker
 
 tidy:
 	go mod tidy
@@ -34,3 +37,23 @@ market:
 
 test:
 	go test ./...
+
+# --- Docker ---
+# 宿主机交叉编译 Linux 二进制（可选，配合 Dockerfile runtime stage）
+docker-bin:
+	GOOS=linux GOARCH=$$(go env GOARCH) CGO_ENABLED=0 \
+		go build -trimpath -ldflags='-s -w' -o bin/eino-bot-linux ./cmd/bot
+
+docker-build:
+	@test -f $(ENV_DOCKER) || (echo "missing $(ENV_DOCKER); cp .env.docker.example $(ENV_DOCKER)" && exit 1)
+	docker compose --env-file $(ENV_DOCKER) build
+
+docker-up:
+	@test -f $(ENV_DOCKER) || (echo "missing $(ENV_DOCKER); cp .env.docker.example $(ENV_DOCKER)" && exit 1)
+	docker compose --env-file $(ENV_DOCKER) up -d --build
+
+docker-down:
+	docker compose --env-file $(ENV_DOCKER) down
+
+docker-logs:
+	docker compose --env-file $(ENV_DOCKER) logs -f --tail=200

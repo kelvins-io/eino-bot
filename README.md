@@ -158,6 +158,35 @@ curl -s -X POST http://127.0.0.1:12120/v1/voice \
 
 说明：样例简历里的 GitHub login 为演示占位，真实平台上可能 404；Agent 会回退到简历内容继续匹配。
 
+## 容器化部署
+
+单镜像双进程：`recruiter`（招聘方，宿主机 `:12120`）与 `talent-market`（人才招聘市场 Agent，宿主机 `:18090`，容器内 `:8090`）。启动后经 `host.docker.internal` 注册到宿主机 [Agent Market](https://github.com/kelvins-io/agent-market)（默认 `:13100`）。
+
+```bash
+cp .env.docker.example .env.docker
+# 填入 SILICONFLOW_API_KEY；可选改 DOCKER_A2A_REGISTRY_URL / 端口
+
+make docker-up          # 构建并后台启动
+# 招聘方：http://127.0.0.1:12120/healthz
+# 人才市场：http://127.0.0.1:18090/healthz
+# 发现：http://127.0.0.1:13100 （需先 docker compose up agent-market）
+
+make docker-logs
+make docker-down
+```
+
+| 服务 | 对外端口 | 说明 |
+| --- | --- | --- |
+| recruiter | 12120 | 招聘方 Bot，托管本机 `/registry`，并向 Agent Market 自注册 |
+| talent-market | 18090 | `A2A_MARKET_RECRUIT_MODE=true`，注册到 recruiter + Agent Market |
+
+环境变量见 `.env.docker.example`。镜像默认 `Dockerfile` 的 `from-source` stage（容器内编译）；若需避开容器拉 Go toolchain，可先 `make docker-bin` 再 `docker build --target runtime`。
+
+```bash
+curl -s http://127.0.0.1:12120/healthz
+curl -s 'http://127.0.0.1:13100/api/v1/agents/bot-recruiter-1' | jq .
+```
+
 ## 配置要点
 
 | 变量 | 含义 |
@@ -172,6 +201,7 @@ curl -s -X POST http://127.0.0.1:12120/v1/voice \
 | `A2A_REGISTRY_URL` | 外部 Registry 根 URL（逗号分隔）；空则注册到 `BOT_PUBLIC_URL` |
 | `A2A_REGISTRY_HEARTBEAT_SEC` | 心跳间隔秒，默认 `60` |
 | `A2A_MARKET_RECRUIT_MODE` | `true` 时本 bot 作为「人才招聘」市场 Agent |
+| `MARKET_LAT` / `MARKET_LNG` | 注册到 Agent Market 时的坐标（可选） |
 | `BOT_DOCS_ROOT` / `BOT_RESUME_ROOT` | 授权文档 / 简历目录 |
 | `SQLITE_PATH` | 数据库路径，默认 `./data/bot.db` |
 | `MODEL_TYPE` | `siliconflow` / `openai` / `ark` |
@@ -197,6 +227,9 @@ internal/asr/            语音转写客户端
 internal/server/         Hertz HTTP / SSE
 internal/config/         环境变量加载
 data/docs|resumes/       授权样例库
+Dockerfile               多阶段镜像（from-source / runtime）
+docker-compose.yml       recruiter + talent-market
+.env.docker.example      Compose 环境变量模板
 ```
 
 ## 尚未覆盖

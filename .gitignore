@@ -1,5 +1,6 @@
 .env
 .env.local
+.env.docker
 data/*.db
 data/*.db-*
 *.exe

@@ -1,0 +1,15 @@
+bin/*
+!bin/eino-bot-linux
+.git/
+.idea/
+.vscode/
+data/*.db
+data/*.db-*
+**/*_test.go
+.env
+.env.*
+!.env.docker.example
+*.md
+!README.md
+agent-transcripts/
+.DS_Store

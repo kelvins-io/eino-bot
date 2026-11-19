@@ -32,6 +32,8 @@ type Config struct {
 	A2ARegistryURLs         []string
 	A2ARegistryHeartbeatSec int
 	A2AMarketRecruitMode    bool
+	MarketLat               float64
+	MarketLng               float64
 	ModelType               string
 	OpenAIAPIKey            string
 	OpenAIModel             string
@@ -66,6 +68,8 @@ func Load() (*Config, error) {
 		A2ARegistryURLs:         splitCSV(os.Getenv("A2A_REGISTRY_URL")),
 		A2ARegistryHeartbeatSec: envInt("A2A_REGISTRY_HEARTBEAT_SEC", 60),
 		A2AMarketRecruitMode:    envBool("A2A_MARKET_RECRUIT_MODE", false),
+		MarketLat:               envFloat("MARKET_LAT", 0),
+		MarketLng:               envFloat("MARKET_LNG", 0),
 		ModelType:               modelType,
 		OpenAIByAzure:           os.Getenv("OPENAI_BY_AZURE") == "true",
 		ArkAPIKey:               os.Getenv("ARK_API_KEY"),
@@ -142,6 +146,18 @@ func envInt(key string, def int) int {
 		return def
 	}
 	n, err := strconv.Atoi(v)
+	if err != nil {
+		return def
+	}
+	return n
+}
+
+func envFloat(key string, def float64) float64 {
+	v := os.Getenv(key)
+	if v == "" {
+		return def
+	}
+	n, err := strconv.ParseFloat(v, 64)
 	if err != nil {
 		return def
 	}

@@ -1,0 +1,107 @@
+# 招聘 Agent 容器化：启动后自动注册到宿主机 Agent Market（默认 :13100）。
+# 用法：
+#   cp .env.docker.example .env.docker   # 填入 SILICONFLOW_API_KEY
+#   make docker-up
+# UI / 发现：http://127.0.0.1:13100 （需先启动 agent-market）
+# 招聘方 API：http://127.0.0.1:12120
+
+name: eino-bot
+
+x-common-env: &common-env
+  MODEL_TYPE: ${MODEL_TYPE:-siliconflow}
+  SILICONFLOW_API_KEY: ${SILICONFLOW_API_KEY:?set SILICONFLOW_API_KEY in .env.docker}
+  SILICONFLOW_MODEL: ${SILICONFLOW_MODEL:-deepseek-ai/DeepSeek-V3}
+  SILICONFLOW_BASE_URL: ${SILICONFLOW_BASE_URL:-https://api.siliconflow.cn/v1}
+  A2A_BEARER_TOKEN: ${A2A_BEARER_TOKEN:-dev-a2a-secret-change-me}
+  A2A_PATH: /a2a
+  A2A_AUTO_REGISTER: "true"
+  A2A_REGISTRY_HEARTBEAT_SEC: "30"
+  HOST: "0.0.0.0"
+  DATA_DIR: /data
+  BOT_DOCS_ROOT: /app/data/docs
+  BOT_RESUME_ROOT: /app/data/resumes
+  GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+  ASR_MODEL: ${ASR_MODEL:-FunAudioLLM/SenseVoiceSmall}
+  MAX_ITERATIONS: ${MAX_ITERATIONS:-16}
+
+services:
+  recruiter:
+    build:
+      context: .
+      target: from-source
+    image: eino-bot:local
+    container_name: eino-bot-recruiter
+    restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      <<: *common-env
+      BOT_ID: bot-recruiter-1
+      BOT_NAME: RecruiterAgent
+      BOT_PUBLIC_URL: ${RECRUITER_PUBLIC_URL:-http://host.docker.internal:12120}
+      PORT: "12120"
+      OWNER_ID: user-alice
+      SQLITE_PATH: /data/recruiter.db
+      A2A_HOST_REGISTRY: "true"
+      # 注册到中央 Agent Market；本机仍托管 /registry 供 talent-market 挂载
+      # 用 DOCKER_A2A_REGISTRY_URL，避免被本地 .env 的 A2A_REGISTRY_URL=127.0.0.1 覆盖
+      A2A_REGISTRY_URL: ${DOCKER_A2A_REGISTRY_URL:-http://host.docker.internal:13100}
+      A2A_MARKET_RECRUIT_MODE: "false"
+      MARKET_LAT: ${MARKET_LAT:-39.9042}
+      MARKET_LNG: ${MARKET_LNG:-116.4074}
+    ports:
+      - "${RECRUITER_HOST_PORT:-12120}:12120"
+    volumes:
+      - recruiter-data:/data
+    networks:
+      - eino-bot-net
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:12120/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 8
+      start_period: 25s
+
+  talent-market:
+    image: eino-bot:local
+    container_name: eino-bot-talent-market
+    restart: unless-stopped
+    depends_on:
+      recruiter:
+        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      <<: *common-env
+      BOT_ID: bot-market-recruit
+      BOT_NAME: TalentMarketAgent
+      BOT_PUBLIC_URL: ${TALENT_MARKET_PUBLIC_URL:-http://host.docker.internal:18090}
+      PORT: "8090"
+      OWNER_ID: user-market
+      SQLITE_PATH: /data/market.db
+      A2A_HOST_REGISTRY: "false"
+      A2A_MARKET_RECRUIT_MODE: "true"
+      # 挂到招聘方本机 Registry + 中央 Agent Market
+      A2A_REGISTRY_URL: ${TALENT_MARKET_REGISTRY_URL:-http://recruiter:12120,http://host.docker.internal:13100}
+      MARKET_LAT: ${MARKET_LAT:-39.908}
+      MARKET_LNG: ${MARKET_LNG:-116.41}
+    ports:
+      - "${TALENT_MARKET_HOST_PORT:-18090}:8090"
+    volumes:
+      - talent-market-data:/data
+    networks:
+      - eino-bot-net
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8090/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 8
+      start_period: 25s
+
+networks:
+  eino-bot-net:
+    driver: bridge
+
+volumes:
+  recruiter-data:
+  talent-market-data:

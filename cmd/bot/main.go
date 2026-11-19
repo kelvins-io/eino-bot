@@ -45,6 +45,8 @@ func main() {
 		BearerToken: cfg.A2ABearerToken, A2APath: cfg.A2APath, DB: db,
 		HostRegistry:      cfg.A2AHostRegistry,
 		MarketRecruitMode: cfg.A2AMarketRecruitMode,
+		MarketLat:         cfg.MarketLat,
+		MarketLng:         cfg.MarketLng,
 		Registration: a2a.RegistrationConfig{
 			Enabled:           cfg.A2AAutoRegister,
 			RegistryURLs:      cfg.A2ARegistryURLs,
