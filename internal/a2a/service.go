@@ -49,6 +49,10 @@ type Service struct {
 	regMu        sync.RWMutex
 	regTargets   []string
 
+	// MarketLat/Lng are optional coords when registering to agent-market.
+	MarketLat float64
+	MarketLng float64
+
 	// When true, this bot acts as a 人才招聘 marketplace agent.
 	marketRecruitMode bool
 	marketMu          sync.RWMutex
@@ -67,6 +71,8 @@ type Config struct {
 	HostRegistry      bool
 	Registration      RegistrationConfig
 	MarketRecruitMode bool
+	MarketLat         float64
+	MarketLng         float64
 }
 
 func NewService(cfg Config) *Service {
@@ -88,6 +94,8 @@ func NewService(cfg Config) *Service {
 		registry:          newRegistryStore(),
 		hostRegistry:      cfg.HostRegistry,
 		regCfg:            cfg.Registration,
+		MarketLat:         cfg.MarketLat,
+		MarketLng:         cfg.MarketLng,
 		marketRecruitMode: cfg.MarketRecruitMode,
 		marketTasks:       map[string]marketProviderTask{},
 	}

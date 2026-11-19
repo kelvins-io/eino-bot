@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -21,6 +22,20 @@ type RegistrationConfig struct {
 	HeartbeatInterval time.Duration
 	// Enabled defaults true when left zero-value with Enabled set via config loader.
 	Enabled bool
+}
+
+// marketRegisterRequest matches agent-market POST /api/v1/agents/register.
+type marketRegisterRequest struct {
+	ID          string         `json:"id"`
+	Name        string         `json:"name"`
+	Description string         `json:"description"`
+	Category    string         `json:"category"`
+	Tags        []string       `json:"tags"`
+	Lat         float64        `json:"lat"`
+	Lng         float64        `json:"lng"`
+	A2AURL      string         `json:"a2a_url"`
+	HandlerPath string         `json:"handler_path"`
+	AgentCard   map[string]any `json:"agent_card,omitempty"`
 }
 
 // StartAutoRegister registers this agent with configured registries and starts heartbeats.
@@ -103,12 +118,56 @@ func (s *Service) registerPayload() map[string]any {
 	}
 }
 
+func (s *Service) marketPayload() marketRegisterRequest {
+	category := "recruit"
+	tags := []string{"招聘", "recruit", "hiring"}
+	desc := ""
+	if s.card != nil {
+		desc = s.card.Description
+		for _, sk := range s.card.Skills {
+			tags = append(tags, sk.Tags...)
+		}
+	}
+	if s.marketRecruitMode {
+		category = "人才招聘"
+		tags = append(tags, DefaultMarketSkillTag, "market")
+	} else {
+		tags = append(tags, "recruiter", "人才招聘")
+	}
+	tags = uniqueStrings(tags)
+
+	lat, lng := s.MarketLat, s.MarketLng
+	if lat == 0 && lng == 0 {
+		lat, lng = 39.9042, 116.4074 // Beijing default (same as agent-market UI)
+	}
+
+	var cardMap map[string]any
+	if s.card != nil {
+		raw, _ := json.Marshal(s.card)
+		_ = json.Unmarshal(raw, &cardMap)
+	}
+	return marketRegisterRequest{
+		ID: s.BotID, Name: s.BotName, Description: desc,
+		Category: category, Tags: tags, Lat: lat, Lng: lng,
+		A2AURL: s.PublicURL, HandlerPath: s.A2APath, AgentCard: cardMap,
+	}
+}
+
 func (s *Service) registerOnce(ctx context.Context, registryBase string) error {
 	if s.isLocalRegistry(registryBase) {
 		s.registry.Upsert(s.PublicURL, s.BotID, s.card)
 		return nil
 	}
-	return s.postRegistry(ctx, registryBase, "/registry/register", s.registerPayload())
+	// Prefer agent-market API (e.g. http://127.0.0.1:13100).
+	if err := s.postRegistry(ctx, registryBase, "/api/v1/agents/register", s.marketPayload()); err == nil {
+		return nil
+	} else {
+		marketErr := err
+		if err2 := s.postRegistry(ctx, registryBase, "/registry/register", s.registerPayload()); err2 != nil {
+			return fmt.Errorf("market: %v; legacy: %v", marketErr, err2)
+		}
+		return nil
+	}
 }
 
 func (s *Service) heartbeatOnce(ctx context.Context, registryBase string) error {
@@ -116,6 +175,10 @@ func (s *Service) heartbeatOnce(ctx context.Context, registryBase string) error 
 		if !s.registry.Touch(s.PublicURL) {
 			s.registry.Upsert(s.PublicURL, s.BotID, s.card)
 		}
+		return nil
+	}
+	// agent-market treats re-register as heartbeat; also try legacy heartbeat.
+	if err := s.registerOnce(ctx, registryBase); err == nil {
 		return nil
 	}
 	return s.postRegistry(ctx, registryBase, "/registry/heartbeat", s.registerPayload())
@@ -126,10 +189,23 @@ func (s *Service) unregisterOnce(ctx context.Context, registryBase string) error
 		_ = s.registry.Delete(s.PublicURL)
 		return nil
 	}
-	return s.postRegistry(ctx, registryBase, "/registry/unregister", map[string]any{
-		"bot_id": s.BotID,
-		"url":    s.PublicURL,
-	})
+	base := strings.TrimRight(registryBase, "/")
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, base+"/api/v1/agents/"+url.PathEscape(s.BotID), nil)
+	if err != nil {
+		return err
+	}
+	resp, err := s.HTTPClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 && resp.StatusCode != http.StatusNotFound {
+		return s.postRegistry(ctx, registryBase, "/registry/unregister", map[string]any{
+			"bot_id": s.BotID,
+			"url":    s.PublicURL,
+		})
+	}
+	return nil
 }
 
 func (s *Service) isLocalRegistry(registryBase string) bool {
@@ -157,4 +233,18 @@ func (s *Service) postRegistry(ctx context.Context, registryBase, path string, b
 		return fmt.Errorf("status %d: %s", resp.StatusCode, string(b))
 	}
 	return nil
+}
+
+func uniqueStrings(in []string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(in))
+	for _, s := range in {
+		s = strings.TrimSpace(s)
+		if s == "" || seen[s] {
+			continue
+		}
+		seen[s] = true
+		out = append(out, s)
+	}
+	return out
 }
